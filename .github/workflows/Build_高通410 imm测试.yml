@@ -376,7 +376,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: ${{ steps.organize.outputs.status == 'success' }}
         with:
-          name: OpenWrt-${{ github.event.inputs.profile }}${{ steps.organize.outputs.firmware_dir | contains('daed') && '-daed' || '' }}${{ env.FILE_DATE }}
+          # ✅ 修复：直接使用 inputs 布尔值判断，移除非法的 | contains() 语法
+          name: OpenWrt-${{ github.event.inputs.profile }}${{ github.event.inputs.enable_daed == 'true' && '-daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '-podman' || '' }}${{ env.FILE_DATE }}
           path: ${{ steps.organize.outputs.firmware_dir }}/*
           retention-days: 30
           compression-level: 6
