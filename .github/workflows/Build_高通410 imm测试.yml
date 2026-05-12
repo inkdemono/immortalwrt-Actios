@@ -411,13 +411,14 @@ jobs:
           EOF
           echo "status=success" >> $GITHUB_OUTPUT
 
-      # 2️⃣5️⃣ 发布 Release
+      # 2️⃣5️⃣ 发布 Release (已修复 YAML 语法错误)
       - name: 🚀 Publish to GitHub Release
         uses: ncipollo/release-action@v1
         if: ${{ env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' }}
         with:
-          tag: ${{ github.event.inputs.profile }}-$(date +"%Y.%m.%d-%H%M")${{ github.event.inputs.enable_daed == 'true' && '-daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '-podman' || '' }}
-          name: "🚀 ${{ github.event.inputs.profile }} | $(date +"%Y-%m-%d")${{ github.event.inputs.enable_daed == 'true' && '🔗Daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '🐳Podman' || '' }}"
+          # ✅ 使用之前步骤已定义的环境变量，移除非法的 $(date) 语法
+          tag: ${{ github.event.inputs.profile }}-${{ env.FILE_DATE }}${{ github.event.inputs.enable_daed == 'true' && '-daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '-podman' || '' }}
+          name: "🚀 ${{ github.event.inputs.profile }} | ${{ env.FILE_DATE }}${{ github.event.inputs.enable_daed == 'true' && ' 🔗Daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && ' 🐳Podman' || '' }}"
           bodyFile: release.md
           artifacts: ${{ steps.organize.outputs.firmware_dir }}/**/*
           allowUpdates: true
