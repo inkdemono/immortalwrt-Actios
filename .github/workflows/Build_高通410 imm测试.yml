@@ -1,404 +1,435 @@
-#
-#
+# .github/workflows/build_immortalwrt_qcom410.yml
+# =============================================================================
+# 🚀 Build ImmortalWrt for Qualcomm 410 Series
+# ✨ 特性:
+#   - 零改上游：依赖修复与配置注入全在 CI 沙箱内完成
+#   - 自动修复 kmod 依赖缺失报错
+#   - 按需集成 Daed(内核透明代理) + Podman(容器运行时)
+#   - 标准化打包 sysupgrade OTA / factory / flash 刷机包
+#   - 缓存优化 + 安全最佳实践
+# =============================================================================
 
-name: 🚀 Build_imm_高通410系列测试
+name: 🚀 Build_imm_高通410系列
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 🎯 触发条件
+# ─────────────────────────────────────────────────────────────────────────────
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
-      ssh:
-        description: ' ← 选择是否开启 SSH 调试专业人员使用'
+      ssh_debug:
+        description: '🔐 开启 SSH 调试 (专业人员使用)'
         required: false
         default: false
         type: boolean
+      
       profile:
-        description: ' ↓ 支持多款型号 手动选择要编译的机型 ↓ '
+        description: '📱 选择编译机型'
         type: choice
-        options:
-          - ufi003
-          - ufi001c
-          - ufi001b
-          - ufi103s
-          - jz02v10
-          - qrzl903
-          - w001
-          - uz801
-          - mf32
-          - mf601
-          - wf2
-          - sp970v11
-          - sp970v10
+        options: [ufi003, ufi001c, ufi001b, ufi103s, jz02v10, qrzl903, w001, uz801, mf32, mf601, wf2, sp970v11, sp970v10]
         default: sp970v11
         required: true
+      
       upstream:
-        description: ' ↓ 选择上游源码仓库 ↓ '
+        description: '🗂️ 上游源码仓库'
         type: choice
-        options:
-          - lkiuyu/immortalwrt
-          - inkdemono/immortalwrt
-        default: inkdemono/immortalwrt
+        options: [lkiuyu/immortalwrt, immortalwrt/immortalwrt]
+        default: lkiuyu/immortalwrt
         required: true
+      
+      branch:
+        description: '🌿 分支 (master / openwrt-23.05 / openwrt-24.10)'
+        required: false
+        default: master
+        type: string
+      
       custom_hash:
-        description: ' ↓ 指定 hash（默认不用填写）↓ '
+        description: '🔖 指定 commit hash (可选)'
         required: false
         default: ''
         type: string
+      
+      enable_daed:
+        description: '🔗 集成 Daed (内核级透明代理)'
+        required: false
+        default: false
+        type: boolean
+      
+      enable_podman:
+        description: '🐳 集成 Podman 容器运行时'
+        required: false
+        default: false
+        type: boolean
+      
       extra_packages:
-        description: ' ↓ 输入额外包名（逗号或空格分隔，留空则不添加任何额外包）↓ '
+        description: '📦 额外包名 (逗号分隔，如: luci-app-adguardhome,vtun)'
         required: false
         default: ''
         type: string
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚙️ 全局环境变量
+# ─────────────────────────────────────────────────────────────────────────────
 env:
   REPO_URL: https://github.com/${{ github.event.inputs.upstream }}
-  REPO_BRANCH: master
+  REPO_BRANCH: ${{ github.event.inputs.branch || 'master' }}
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: ${{ format('config/{0}.config', github.event.inputs.profile) }}
+  CONFIG_FILE: config/${{ github.event.inputs.profile }}.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  MAKE_JOBS: 2
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 🏗️ 主构建任务
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: 🛠️ Build-${{ github.event.inputs.profile }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
     permissions:
       contents: write
       actions: write
+
     steps:
-    - name: 🚀 编译 (Build)
-      uses: actions/checkout@main
+      # 1️⃣ 检出仓库
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Show hardware info
-      run: |
-        chmod 755 ./scripts/show_hardware_info.sh
-        ./scripts/show_hardware_info.sh
-  
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: false
-        android: false
-        dotnet: false
-        haskell: false
-        large-packages: false
-        docker-images: false
-        swap-storage: true
-        
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo -E apt-get -y update
-        sudo -E apt-get -y install $(curl -fsSL https://raw.githubusercontent.com/xuxin1955/depend_ubuntu2204_openwrt/refs/heads/main/depend_ubuntu2204_openwrt)
+      # 2️⃣ 环境诊断
+      - name: 🔍 Show environment info
+        run: |
+          echo "🖥️  OS: $(uname -a)"
+          echo "💾  Disk: $(df -h / | tail -1 | awk '{print $4}')"
+          echo "🧠  RAM: $(free -h | grep Mem | awk '{print $2}')"
+          echo "⚡  CPU: $(nproc) cores"
+          ./scripts/show_hardware_info.sh 2>/dev/null || true
 
-    - name: mkbootimg build
-      run: |
-        wget https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
-        sudo dpkg -i mkbootimg_34.0.5-12build1_all.deb
-        sudo apt-get install -f -y
-        # 验证安装
-        mkbootimg --help || true
-        MKBOOTIMG_PATH=$(which mkbootimg)
-        if [ -n "$MKBOOTIMG_PATH" ]; then
-        echo "mkbootimg found at: $MKBOOTIMG_PATH"
-        file "$MKBOOTIMG_PATH"
-        else
-        echo "❌ mkbootimg not found in PATH!"
-        fi
+      # 3️⃣ 释放磁盘空间
+      - name: 🗑️ Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: false
+          dotnet: false
+          haskell: false
+          large-packages: false
+          docker-images: true
+          swap-storage: false
 
-        sudo timedatectl set-timezone "$TZ"
-        sudo chmod 777 /mnt
-        df -hT
-        
-    - name: Ensure Python build tools
-      run: |
-       python3 -m pip cache purge
-       python3 -m pip install --upgrade --force-reinstall pip
-       python3 -m pip install --upgrade --force-reinstall 'setuptools>=65' wheel
-       python3 -m pip install --upgrade 'setuptools-scm>=8,<10'
-       python3 -m pip install --upgrade cython packaging tomli
-       python3 -m pip install Unidecode pyelftools
-       python3 -m pip --version
-       python3 -c "import setuptools.build_meta; print('setuptools.build_meta OK')"
+      # 4️⃣ 安装编译依赖
+      - name: 📦 Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev \
+            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev \
+            libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full \
+            patch pkgconf python3 python3-pip python3-setuptools qemu-utils rsync scons squashfs-tools \
+            subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
+      # 5️⃣ 安装 mkbootimg (高通平台)
+      - name: 🔧 Install mkbootimg
+        run: |
+          wget -q -O mkbootimg.deb https://github.com/xuxin1955/depend_ubuntu2204_openwrt/releases/download/ubuntu_26.04_LTS_mkbootimg/mkbootimg_34.0.5-12build1_all.deb
+          sudo dpkg -i mkbootimg.deb || sudo apt-get install -f -y
+          mkbootimg --version || echo "⚠️ mkbootimg 验证跳过"
+          sudo timedatectl set-timezone "$TZ"
 
+      # 6️⃣ Python 工具链 (Daed/Podman 需要)
+      - name: 🐍 Setup Python tools
+        if: ${{ github.event.inputs.enable_daed == 'true' || github.event.inputs.enable_podman == 'true' }}
+        run: |
+          python3 -m pip install --user --upgrade pip setuptools wheel
+          python3 -m pip install --user cython packaging tomli pyelftools Unidecode
 
-    - name: 读取锁定的上游 hash (Read locked upstream hash)
-      id: lock
-      run: |
-        CUSTOM_HASH="${{ github.event.inputs.custom_hash }}"
-        LOCK_FILE="upstream_lock.txt"
-        if [ -n "$CUSTOM_HASH" ]; then
-          echo "locked_hash=$CUSTOM_HASH" >> $GITHUB_OUTPUT
-          echo "使用用户指定 hash: $CUSTOM_HASH"
-        elif [ -f "$LOCK_FILE" ]; then
-          HASH=$(cat $LOCK_FILE)
+      # 7️⃣ 缓存配置 (加速重复构建)
+      - name: 🗄️ Setup cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ccache
+            openwrt/dl
+            openwrt/staging_dir
+          key: ${{ runner.os }}-openwrt-${{ github.event.inputs.profile }}-${{ hashFiles('config/*.config', 'feeds.conf.default') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-${{ github.event.inputs.profile }}-
+            ${{ runner.os }}-openwrt-
+
+      # 8️⃣ 解析 Hash
+      - name: 🔖 Resolve upstream commit
+        id: lock
+        run: |
+          CUSTOM="${{ github.event.inputs.custom_hash }}"
+          LOCK_FILE="upstream_lock.txt"
+          HASH=""
+          if [[ -n "$CUSTOM" && "$CUSTOM" =~ ^[0-9a-f]{7,40}$ ]]; then
+            HASH="$CUSTOM"
+          elif [[ -f "$LOCK_FILE" ]]; then
+            HASH=$(cat "$LOCK_FILE" | head -1)
+          fi
           echo "locked_hash=$HASH" >> $GITHUB_OUTPUT
-          echo "使用锁定 hash: $HASH"
-        else
-          echo "locked_hash=" >> $GITHUB_OUTPUT
-          echo "upstream_lock.txt 不存在，使用最新 master"
-        fi
+          [[ -n "$HASH" ]] && echo "✅ 锁定版本: ${HASH:0:7}" || echo "ℹ️ 使用最新分支"
 
-    - name: Clone source code
-      working-directory: /mnt
-      run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        if [ -n "${{ steps.lock.outputs.locked_hash }}" ]; then
-          cd openwrt && git checkout ${{ steps.lock.outputs.locked_hash }}
-        fi
-        ln -sf /mnt/openwrt $GITHUB_WORKSPACE/openwrt
-
-
-    - name:  files
-      run: cp -r files openwrt/files
-
-    - name: Load custom feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-        
-
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: Remove conflicting packages from smpackage
-      run: |
-        # 删除 small-package 中与系统冲突的包，避免编译报错（官方推荐操作）
-        rm -rf openwrt/feeds/smpackage/{base-files,dnsmasq,firewall*,fullconenat,libnftnl,nftables,ppp,opkg,ucl,upx,vsftpd*,miniupnpd-iptables,wireless-regdb}
-
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a -f
-
-    - name: Load custom configuration
-      run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    - name: Install extra packages
-      if: ${{ inputs.extra_packages != '' }}
-      run: |
-        cd openwrt
-        echo "=========================================="
-        echo "User requested extra packages:"
-        echo "${{ inputs.extra_packages }}"
-        echo "=========================================="
-        # 支持逗号或空格分隔，先把逗号替换为空格
-        PACKAGES=$(echo '${{ inputs.extra_packages }}' | sed 's/,/ /g')
-        for pkg in $PACKAGES; do
-          if [ -n "$pkg" ]; then
-            echo "Adding package to .config: CONFIG_PACKAGE_$pkg=y"
-            echo "CONFIG_PACKAGE_$pkg=y" >> .config
+      # 9️⃣ 克隆源码
+      - name: 📥 Clone source code
+        working-directory: /mnt
+        run: |
+          git clone --depth 1 --single-branch -b "$REPO_URL" "$REPO_URL" openwrt
+          cd openwrt
+          if [[ -n "${{ steps.lock.outputs.locked_hash }}" ]]; then
+            git fetch --depth 1 origin "${{ steps.lock.outputs.locked_hash }}"
+            git checkout "${{ steps.lock.outputs.locked_hash }}"
           fi
-        done
-        
-        
-    - name: SSH 调试有效时间6h! 连接后输入q 输入exit即可退出，自动继续后续编译流程
-      uses: mxschmitt/action-tmate@master
-      if: ${{ inputs.ssh || contains(github.event.action, 'ssh') }}
-      
-      
-    - name: Config defconfig
-      id: config
-      run: |
-       cd openwrt
-       make defconfig
-       
-    - name: Download package
-      id: package
-      run: |
-        cd openwrt
-        make download -j4 V=s
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+          ln -sf /mnt/openwrt "$GITHUB_WORKSPACE/openwrt"
 
-    - name: 查看 openwrt 目录
-      run: ls -la openwrt/
-      
-           ls -l .config
-      
-           ls -la openwrt/.config
+      # 🔟 复制 files 目录
+      - name: 📁 Copy custom files
+        run: |
+          [[ -d files ]] && cp -rf files openwrt/files || echo "ℹ️ 无自定义 files 目录"
 
- 
-    - name: 自动上传最新源码生成.config编译配置
-      uses: actions/upload-artifact@main
-      with:
-       name: build-config
-       path: |
-         ${{ github.workspace }}/openwrt/.config
-         ${{ github.workspace }}/openwrt/feeds.conf.default
-       include-hidden-files: true
-
-
-    - name: Compile the firmware
-      id: compile
-      run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-    - name: Get kernel version
-      run: |
-        KERNEL_VER=$(cat /mnt/openwrt/build_dir/target-*/linux-*/linux-*/.kernelversion 2>/dev/null | head -1 || echo "未知")
-        echo "KERNEL_VER=$KERNEL_VER" >> $GITHUB_ENV
-
-
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Fix Git buffer
-      run: git config --global http.postBuffer 524288000
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: Organize files
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        PROFILE=${{ github.event.inputs.profile }}
-
-        # 创建刷机包目录并打包 zip
-        mkdir -p flash_package
-        BOOT_IMG=$(ls *boot.img.gz *boot.img 2>/dev/null | head -1)
-        SYSTEM_IMG=$(ls *system.img.gz *system.img 2>/dev/null | head -1)
-        if [ -z "$BOOT_IMG" ] || [ -z "$SYSTEM_IMG" ]; then
-          echo "::error::固件文件未找到，编译可能失败！当前目录文件："
-          ls -la
-          exit 1
-        fi
-        cp "$BOOT_IMG" flash_package/boot.img.gz
-        cp "$SYSTEM_IMG" flash_package/system.img.gz
-        # 解压供刷机脚本使用
-        gzip -dk flash_package/boot.img.gz
-        gzip -dk flash_package/system.img.gz
-        rm flash_package/boot.img.gz flash_package/system.img.gz
-        cp -r $GITHUB_WORKSPACE/刷机脚本/. flash_package/
-        # 确保 bat 文件是 CRLF 换行（Windows 兼容）
-        unix2dos flash_package/*.bat 2>/dev/null || sed -i 's/\r//' flash_package/*.bat && sed -i 's/$/\r/' flash_package/*.bat
-        ZIP_NAME="OpenWrt_${PROFILE}${{ env.FILE_DATE }}_刷机包.zip"
-        cd flash_package && zip -r "../$ZIP_NAME" . && cd ..
-
-        # 整理 release 目录：zip + 单独固件 + 编译信息
-        mkdir -p release_files
-        mv "$ZIP_NAME" release_files/
-        cp *.manifest release_files/ 2>/dev/null || true
-        cp *.buildinfo release_files/ 2>/dev/null || true
-        cp sha256sums release_files/ 2>/dev/null || true
-
-        echo "FIRMWARE=$PWD/release_files" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    - name: Generate release tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        PROFILE=${{ github.event.inputs.profile }}
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")-${PROFILE}" >> $GITHUB_OUTPUT
-        touch release.txt
-        {
-          echo "## Immortalwrt master分支 高通410系列 · ${PROFILE}"
-          echo ""
-          echo "| 项目 | 信息 |"
-          echo "|------|------|"
-          echo "| 编译者 | ${{ github.actor }} |"
-          echo "| 机型 | ${PROFILE} |"
-          echo "| 内核版本 | ${{ env.KERNEL_VER }} |"
-          echo "| 管理地址 | 192.168.1.1 |"
-          echo "| 默认用户 | root |"
-          echo "| 默认密码 | 空 |"
-          echo ""
-          # 额外包
-          EXTRA=$(echo '${{ inputs.extra_packages }}' | sed 's/,/ /g' | tr ' ' '\n' | sed '/^$/d')
-          if [ -n "$EXTRA" ]; then
-            echo "### 额外添加的包"
-            echo "$EXTRA" | sed 's/^/- /'
-          else
-            echo "### 额外添加的包"
-            echo "无"
+      # 1️⃣1️⃣ 配置 Feeds (含 Daed 源)
+      - name: 🧩 Load custom feeds
+        run: |
+          [[ -f "$FEEDS_CONF" ]] && cp "$FEEDS_CONF" openwrt/feeds.conf.default
+          
+          # 按需添加 Daed 源
+          if [[ "${{ github.event.inputs.enable_daed }}" == "true" ]]; then
+            echo -e "\n# Daed Feeds\nsrc-git daed https://github.com/daeuniverse/luci-app-daed;main\nsrc-git dae https://github.com/daeuniverse/dae.git;main" >> openwrt/feeds.conf.default
           fi
-        } >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
+          
+          chmod +x "$DIY_P1_SH" 2>/dev/null || true
+          [[ -f "$DIY_P1_SH" ]] && cp "$DIY_P1_SH" openwrt/ && cd openwrt && ./diy-part1.sh || true
 
+      # 1️⃣2️⃣ 更新 Feeds
+      - name: 🔄 Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
 
+      # 1️⃣3️⃣ 移除冲突包
+      - name: 🧹 Remove conflicting packages
+        run: rm -rf openwrt/feeds/smpackage/{base-files,dnsmasq,firewall*,fullconenat,libnftnl,nftables,ppp,opkg,ucl,upx,vsftpd*,miniupnpd-iptables,wireless-regdb}
 
-    - name: Generate file list
-      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
-      run: |
-        find ${{ env.FIRMWARE }} -type f > file_list.txt
-        echo "Collected files:"
-        cat file_list.txt
-        test -s file_list.txt || { echo "::error::No firmware files found"; exit 1; }
+      # 1️⃣4️⃣ 安装 Feeds
+      - name: 📦 Install feeds
+        run: cd openwrt && ./scripts/feeds install -a -f
 
+      # 1️⃣5️⃣ 执行 diy-part2 + 🔑 核心修复 & 配置注入
+      - name: 🛠️ Apply fixes & inject config
+        run: |
+          cd openwrt
+          
+          # 1. 执行原有 diy-part2.sh (如果存在)
+          chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH" 2>/dev/null || true
+          [[ -f "$GITHUB_WORKSPACE/$DIY_P2_SH" ]] && ./diy-part2.sh || true
+          
+          # 2. 复制基础 .config
+          [[ -f "$GITHUB_WORKSPACE/$CONFIG_FILE" ]] && cp "$GITHUB_WORKSPACE/$CONFIG_FILE" .config || cp defconfig .config
+          
+          # 3. 🛡️ 修复 dae 依赖包名不匹配问题 (零改上游)
+          DAE_MK=$(find package/feeds -name Makefile -path "*/dae/*" 2>/dev/null | head -1)
+          if [ -f "$DAE_MK" ]; then
+            echo "🔧 修补 dae Makefile 依赖..."
+            sed -i 's/kmod-sched-core/kmod-sched/g' "$DAE_MK"
+            sed -i 's/kmod-sched-bpf/kmod-cls-bpf/g' "$DAE_MK"
+            sed -i 's/kmod-xdp-sockets-diag/kmod-xdp-sockets/g' "$DAE_MK"
+          fi
+          
+          # 4. 📦 注入 Daed / Podman 内核与软件配置
+          cat >> .config <<'CFGEOF'
+          CONFIG_KERNEL_BPF=y
+          CONFIG_KERNEL_BPF_SYSCALL=y
+          CONFIG_KERNEL_BPF_JIT=y
+          CONFIG_KERNEL_NET_CLS_BPF=y
+          CONFIG_KERNEL_XDP_SOCKETS=y
+          CONFIG_NET_SCHED=y
+          CONFIG_KERNEL_CGROUPS=y
+          CONFIG_KERNEL_CGROUP_V2=y
+          CONFIG_KERNEL_NAMESPACES=y
+          CONFIG_KERNEL_OVERLAY_FS=y
+          CONFIG_KERNEL_FUSE_FS=y
+          CONFIG_PACKAGE_kmod-veth=y
+          CONFIG_PACKAGE_kmod-bridge=y
+          CONFIG_PACKAGE_kmod-br-netfilter=y
+          CONFIG_PACKAGE_kmod-fuse=y
+          CONFIG_PACKAGE_kmod-ipt-nat=y
+          CONFIG_PACKAGE_kmod-nft-core=y
+          CONFIG_PACKAGE_kmod-nft-nat=y
+          CONFIG_PACKAGE_kmod-sched=y
+          CONFIG_PACKAGE_kmod-cls-bpf=y
+          CONFIG_PACKAGE_kmod-xdp-sockets=y
+          CONFIG_PACKAGE_libbpf=y
+          CONFIG_PACKAGE_ca-bundle=y
+          CFGEOF
 
+          if [[ "${{ github.event.inputs.enable_daed }}" == "true" ]]; then
+            echo -e "\n# Daed Proxy\nCONFIG_PACKAGE_luci-app-daed=y\nCONFIG_PACKAGE_daed=y\nCONFIG_PACKAGE_dae=y" >> .config
+          fi
+          if [[ "${{ github.event.inputs.enable_podman }}" == "true" ]]; then
+            echo -e "\n# Podman Containers\nCONFIG_PACKAGE_podman=y\nCONFIG_PACKAGE_containerd=y\nCONFIG_PACKAGE_fuse-overlayfs=y\nCONFIG_PACKAGE_crictl=y\nCONFIG_PACKAGE_runc=y\nCONFIG_PACKAGE_slirp4netns=y\nCONFIG_PACKAGE_catatonit=y" >> .config
+          fi
 
-    - name: Upload firmware to release
-      if: env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success'
-      uses: ncipollo/release-action@main
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag: ${{ steps.tag.outputs.release_tag }}
-        bodyFile: release.txt
-        artifacts: ${{ env.FIRMWARE }}/**/*
-        artifactErrorsFailBuild: false
-        allowUpdates: true
-        draft: false
-        prerelease: false
-
-    - name: Delete old workflow runs via GitHub API
-      if: always()
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        RETAIN_DAYS: 7
-        KEEP_MINIMUM_RUNS: 5
-      run: |
-        RUNS=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=100")
-        CUTOFF=$(date -d "-${RETAIN_DAYS} days" +%s)
-        DEL_IDS=$(echo "$RUNS" | jq -r --arg cutoff "$CUTOFF" --argjson keep "$KEEP_MINIMUM_RUNS" '
-          [.workflow_runs[]
-            | select((now - (.created_at | fromdateiso8601)) > ($cutoff | tonumber))
-            | {id, created_at}
-          ]
-          | sort_by(.created_at)
-          | .[:-$keep]
-          | .[].id
-        ')
-        if [[ -z "$DEL_IDS" ]]; then
-          echo "No old runs to delete."
-        else
-          echo "$DEL_IDS" | while read run_id; do
-            echo "Deleting run $run_id"
-            curl -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id"
+      # 1️⃣6️⃣ 额外包注入
+      - name: ➕ Add extra packages
+        if: ${{ github.event.inputs.extra_packages != '' }}
+        run: |
+          cd openwrt
+          for pkg in $(echo '${{ github.event.inputs.extra_packages }}' | tr ',' ' '); do
+            pkg=$(echo "$pkg" | xargs)
+            [[ -n "$pkg" ]] && echo "CONFIG_PACKAGE_$pkg=y" >> .config
           done
-        fi
+
+      # 1️⃣7️⃣ SSH 调试
+      - name: 🔐 SSH Debug Session
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event.inputs.ssh_debug == true }}
+        with:
+          limit-access-to-actor: true
+
+      # 1️⃣8️⃣ 生成最终配置
+      - name: ⚙️ Generate defconfig
+        run: cd openwrt && make defconfig
+
+      # 1️⃣9️⃣ 下载源码
+      - name: ⬇️ Download sources
+        run: |
+          cd openwrt
+          make download -j"$MAKE_JOBS" V=s 2>&1 | tail -20
+          find dl -size -1024c -type f -delete 2>/dev/null || true
+
+      # 2️⃣0️⃣ 编译固件
+      - name: 🔥 Compile firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo "⚡ Compiling with $MAKE_JOBS threads..."
+          make -j"$MAKE_JOBS" V=s 2>&1 | tee build.log || { echo "⚠️ 并行失败，降级重试"; make -j1 V=s 2>&1 | tee -a build.log; }
+          
+          if ! ls bin/targets/*/*/*-sysupgrade.* >/dev/null 2>&1 && ! ls bin/targets/*/*/*.img.gz >/dev/null 2>&1; then
+            echo "::error::❌ 未生成固件，编译可能失败"
+            exit 1
+          fi
+          
+          DEVICE=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
+          echo "device_name=$DEVICE" >> $GITHUB_OUTPUT
+          echo "DEVICE_NAME=_$DEVICE" >> $GITHUB_ENV
+          echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      # 2️⃣1️⃣ 获取内核版本
+      - name: 📋 Get kernel version
+        run: |
+          KERNEL_VER=$(find openwrt/build_dir/target-*/linux-*/linux-* -name ".kernelversion" -exec head -1 {} \; 2>/dev/null | head -1 || echo "unknown")
+          echo "KERNEL_VER=${KERNEL_VER:-unknown}" >> $GITHUB_ENV
+
+      # 2️⃣2️⃣ 打包固件 (sysupgrade / factory / flash)
+      - name: 📦 Organize & Package firmware
+        id: organize
+        if: env.UPLOAD_FIRMWARE == 'true'
+        run: |
+          cd openwrt/bin/targets/*/*
+          PROFILE="${{ github.event.inputs.profile }}"
+          TAGS="${{ github.event.inputs.enable_daed == 'true' && '-daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '-podman' || '' }}"
+          OUTDIR="release_files"
+          mkdir -p "$OUTDIR"/{sysupgrade,factory,flash_scripts}
+          
+          # sysupgrade (OTA)
+          for f in *-sysupgrade.bin *-sysupgrade.img.gz; do [ -f "$f" ] && cp "$f" "$OUTDIR/sysupgrade/"; done
+          # factory (首刷)
+          for f in *-factory.bin *-factory.img.gz; do [ -f "$f" ] && cp "$f" "$OUTDIR/factory/"; done
+          # Android 分区镜像
+          [ -f "$(ls *boot.img* 2>/dev/null | head -1)" ] && cp "$(ls *boot.img* 2>/dev/null | head -1)" "$OUTDIR/flash_scripts/"
+          [ -f "$(ls *system.img* 2>/dev/null | head -1)" ] && cp "$(ls *system.img* 2>/dev/null | head -1)" "$OUTDIR/flash_scripts/"
+          
+          # 刷机脚本 (Windows 兼容)
+          if [ -d "$GITHUB_WORKSPACE/刷机脚本" ]; then
+            cp -r "$GITHUB_WORKSPACE/刷机脚本"/* "$OUTDIR/flash_scripts/" 2>/dev/null || true
+            for f in "$OUTDIR/flash_scripts"/*.bat; do [ -f "$f" ] && sed -i 's/$/\r/' "$f"; done
+          fi
+          
+          # 校验与元数据
+          cd "$OUTDIR/sysupgrade" && sha256sum * > checksums.txt 2>/dev/null && cd ../..
+          cp *.manifest *.buildinfo sha256sums "$OUTDIR/" 2>/dev/null || true
+          
+          # 打包 ZIP
+          ZIP_SYS="OpenWrt_${PROFILE}${TAGS}${{ env.FILE_DATE }}_OTA.zip"
+          ZIP_FAC="OpenWrt_${PROFILE}${TAGS}${{ env.FILE_DATE }}_Factory.zip"
+          ZIP_FL="OpenWrt_${PROFILE}${TAGS}${{ env.FILE_DATE }}_Flash.zip"
+          [ "$(ls -A sysupgrade)" ] && zip -j "$ZIP_SYS" sysupgrade/*
+          [ "$(ls -A factory)" ] && zip -j "$ZIP_FAC" factory/*
+          [ "$(ls -A flash_scripts)" ] && (cd flash_scripts && zip -r "../$ZIP_FL" .)
+          
+          echo "firmware_dir=$PWD/$OUTDIR" >> $GITHUB_OUTPUT
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      # 2️⃣3️⃣ 上传 Artifacts
+      - name: 📤 Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        if: ${{ steps.organize.outputs.status == 'success' }}
+        with:
+          name: OpenWrt-${{ github.event.inputs.profile }}${{ steps.organize.outputs.firmware_dir | contains('daed') && '-daed' || '' }}${{ env.FILE_DATE }}
+          path: ${{ steps.organize.outputs.firmware_dir }}/*
+          retention-days: 30
+          compression-level: 6
+
+      # 2️⃣4️⃣ 生成 Release 说明
+      - name: 📝 Generate release notes
+        id: release
+        if: ${{ env.UPLOAD_RELEASE == 'true' }}
+        run: |
+          PROFILE="${{ github.event.inputs.profile }}"
+          DAED_INFO="${{ github.event.inputs.enable_daed == 'true' && '✅ 已集成 daed' || '❌ 未集成'}}"
+          PODMAN_INFO="${{ github.event.inputs.enable_podman == 'true' && '✅ 已集成 podman' || '❌ 未集成'}}"
+          
+          cat > release.md <<EOF
+          ## 🚀 ImmortalWrt for Qualcomm 410 Series | \${PROFILE}
+          
+          | 项目 | 信息 |
+          |------|------|
+          | 📅 编译时间 | \$(date +"%Y-%m-%d %H:%M") |
+          | 🐧 内核版本 | \${{ env.KERNEL_VER }} |
+          | 🔗 Daed | ${DAED_INFO} |
+          | 🐳 Podman | ${PODMAN_INFO} |
+          | 🌐 管理地址 | http://192.168.1.1 |
+          | 👤 默认密码 | 空 |
+          
+          ### 📦 固件说明
+          - **\`*_OTA.zip\`**: 包含 `sysupgrade.bin/img.gz`，用于 OpenWrt 在线升级（保留配置）
+          - **\`*_Factory.zip\`**: 包含 `factory.bin`，用于原厂固件首次刷入（清除数据）
+          - **\`*_Flash.zip\`**: 包含 `boot.img` + `system.img` + 刷机脚本，适用于高通线刷
+          
+          > 💡 刷入前请校验 \`checksums.txt\`，确保固件完整。
+          EOF
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      # 2️⃣5️⃣ 发布 Release
+      - name: 🚀 Publish to GitHub Release
+        uses: ncipollo/release-action@v1
+        if: ${{ env.UPLOAD_RELEASE == 'true' && steps.organize.outputs.status == 'success' }}
+        with:
+          tag: ${{ github.event.inputs.profile }}-$(date +"%Y.%m.%d-%H%M")${{ github.event.inputs.enable_daed == 'true' && '-daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '-podman' || '' }}
+          name: "🚀 ${{ github.event.inputs.profile }} | $(date +"%Y-%m-%d")${{ github.event.inputs.enable_daed == 'true' && '🔗Daed' || '' }}${{ github.event.inputs.enable_podman == 'true' && '🐳Podman' || '' }}"
+          bodyFile: release.md
+          artifacts: ${{ steps.organize.outputs.firmware_dir }}/**/*
+          allowUpdates: true
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2️⃣6️⃣ 清理旧 Runs
+      - name: 🧹 Cleanup old runs
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          retain_days: 7
+          keep_minimum_runs: 5
