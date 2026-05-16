@@ -1,23 +1,23 @@
 # ============================================================
-# 工作流名称：🚀 Build_imm_高通410系列sysupgrade.bin
+# 工作流名称：🚀 Build_imm_高通410系列
 # 触发条件：仓库调度事件 / 手动触发
 # 修改说明：添加 sysupgrade.bin 编译输出支持 + 智能打包逻辑
 # ============================================================
 
 name: 🚀 Build_imm_高通410系列
 
-于:
+on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
         description: ' ← 选择是否开启 SSH 调试专业人员使用'
         required: false
-        默认: false
-        输入: boolean
+        default: false
+        type: boolean
       profile:
         description: ' ↓ 支持多款型号 手动选择要编译的机型 ↓ '
-        输入: choice
+        type: choice
         options:
           - ufi003
           - ufi001c
@@ -33,26 +33,26 @@ name: 🚀 Build_imm_高通410系列
           - sp970v11
           - sp970v10
           - sp970v110
-        默认: sp970v110
+        default: sp970v110
         required: true
       upstream:
         description: ' ↓ 选择上游源码仓库 ↓ '
-        输入: choice
+        type: choice
         options:
           - lkiuyu/immortalwrt
           - inkdemono/immortalwrt
-        默认: inkdemono/immortalwrt
+        default: inkdemono/immortalwrt
         required: true
       custom_hash:
         description: ' ↓ 指定 hash（默认不用填写）↓ '
         required: false
-        默认: ''
-        输入: string
+        default: ''
+        type: string
       extra_packages:
         description: ' ↓ 输入额外包名（逗号或空格分隔，留空则不添加任何额外包）↓ '
         required: false
-        默认: ''
-        输入: string
+        default: ''
+        type: string
 
 env:
   REPO_URL: https://github.com/${{ github.event.inputs.upstream }}
@@ -337,7 +337,7 @@ jobs:
           path: openwrt/bin
 
       # ──────────────────────────────────────────────────────
-      # 🔥 2️⃣5.5️⃣ 新增：调试检查 sysupgrade.bin 是否生成
+      # 🔥 2️⃣5️⃣ 新增：调试检查 sysupgrade.bin 是否生成
       # ──────────────────────────────────────────────────────
       - name: "Debug: Check for sysupgrade.bin"
         if: ${{ !cancelled() }}
