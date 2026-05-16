@@ -6,18 +6,18 @@
 
 name: 🚀 Build_imm_高通410系列
 
-on:
+于:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
         description: ' ← 选择是否开启 SSH 调试专业人员使用'
         required: false
-        default: false
-        type: boolean
+        默认: false
+        输入: boolean
       profile:
         description: ' ↓ 支持多款型号 手动选择要编译的机型 ↓ '
-        type: choice
+        输入: choice
         options:
           - ufi003
           - ufi001c
@@ -33,26 +33,26 @@ on:
           - sp970v11
           - sp970v10
           - sp970v110
-        default: sp970v110
+        默认: sp970v110
         required: true
       upstream:
         description: ' ↓ 选择上游源码仓库 ↓ '
-        type: choice
+        输入: choice
         options:
           - lkiuyu/immortalwrt
           - inkdemono/immortalwrt
-        default: inkdemono/immortalwrt
+        默认: inkdemono/immortalwrt
         required: true
       custom_hash:
         description: ' ↓ 指定 hash（默认不用填写）↓ '
         required: false
-        default: ''
-        type: string
+        默认: ''
+        输入: string
       extra_packages:
         description: ' ↓ 输入额外包名（逗号或空格分隔，留空则不添加任何额外包）↓ '
         required: false
-        default: ''
-        type: string
+        默认: ''
+        输入: string
 
 env:
   REPO_URL: https://github.com/${{ github.event.inputs.upstream }}
