@@ -339,7 +339,7 @@ jobs:
       # ──────────────────────────────────────────────────────
       # 🔥 2️⃣5.5️⃣ 新增：调试检查 sysupgrade.bin 是否生成
       # ──────────────────────────────────────────────────────
-      - name: 🔍 Debug: Check for sysupgrade.bin
+      - name: Debug: Check for sysupgrade.bin
         if: ${{ !cancelled() }}
         run: |
           echo "=== 🔍 Checking firmware output directory ==="
