@@ -339,26 +339,23 @@ jobs:
       # ──────────────────────────────────────────────────────
       # 🔥 2️⃣5.5️⃣ 新增：调试检查 sysupgrade.bin 是否生成
       # ──────────────────────────────────────────────────────
-      - name: Debug: Check for sysupgrade.bin
+      - name: "Debug: Check for sysupgrade.bin"
         if: ${{ !cancelled() }}
         run: |
-          echo "=== 🔍 Checking firmware output directory ==="
+          echo "=== Checking firmware output directory ==="
           cd openwrt/bin/targets/
-          for dir in */*/; do
-            echo "--- $dir ---"
-            ls -lh "$dir"*.bin "$dir"*.img 2>/dev/null || echo "(no images found)"
-          done
+          find . -type f \( -name "*.bin" -o -name "*.img" \) -ls
           echo ""
-          echo "=== 🔍 Searching for sysupgrade.bin ==="
-          if find . -name "*sysupgrade.bin" -type f 2>/dev/null | grep -q .; then
+          echo "=== Searching for sysupgrade.bin ==="
+          if find . -name "*sysupgrade.bin" -type f | grep -q .; then
             echo "✅ sysupgrade.bin FOUND!"
-            find . -name "*sysupgrade.bin" -type f -exec ls -lh {} \;
+            find . -name "*sysupgrade.bin" -type f -ls
           else
-            echo "⚠️ sysupgrade.bin NOT FOUND"
+            echo "️ sysupgrade.bin NOT FOUND"
             echo "💡 可能原因:"
-            echo "   1. target/linux/msm89xx/image/Makefile 未定义 IMAGE/sysupgrade.bin"
+            echo "   1. Makefile 未定义 IMAGE/sysupgrade.bin"
             echo "   2. .config 未启用 CONFIG_TARGET_ROOTFS_SQUASHFS"
-            echo "   3. 设备定义 (msm8916.mk) 未继承 sysupgrade 支持"
+            echo "   3. 设备定义未继承 sysupgrade 支持"
           fi
 
       # ──────────────────────────────────────────────────────
